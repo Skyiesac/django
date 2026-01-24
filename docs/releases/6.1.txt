@@ -157,6 +157,9 @@ Minor features
 * :class:`~django.contrib.gis.forms.widgets.OpenLayersWidget` is now based on
   OpenLayers 10.9.0 (previously 7.2.2).
 
+* The ``ST_Distance_Sphere`` function is now supported in MySQL for distance
+  calculations on geodetic coordinate systems with point geometries.
+
 :mod:`django.contrib.messages`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
