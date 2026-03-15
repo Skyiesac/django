@@ -1,4 +1,4 @@
-/*global Calendar, findPosX, findPosY, get_format, gettext, gettext_noop, interpolate, ngettext, quickElement*/
+/*global Calendar, CalendarNamespace, findPosX, findPosY, get_format, gettext, gettext_noop, interpolate, ngettext, quickElement*/
 // Inserts shortcut buttons after all of the following:
 //     <input type="text" class="vDateField">
 //     <input type="text" class="vTimeField">
@@ -27,6 +27,9 @@
         shortCutsClass: 'datetimeshortcuts', // class of the clock and cal shortcuts
         timezoneWarningClass: 'timezonewarning', // class of the warning for timezone mismatch
         timezoneOffset: 0,
+        getFirstFocusableElement: function(container) {
+            return container.querySelector('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        },
         init: function() {
             const serverOffset = document.body.dataset.adminUtcOffset;
             if (serverOffset) {
@@ -131,11 +134,14 @@
                 DateTimeShortcuts.openClock(num);
             });
 
+            const clockIconId = DateTimeShortcuts.clockLinkName + num + '_icon';
             quickElement(
                 'span', clock_link, '',
+                'id', clockIconId,
                 'class', 'clock-icon',
                 'title', gettext('Choose a Time')
             );
+            clock_link.setAttribute('aria-labelledby', clockIconId);
             shortcuts_span.appendChild(document.createTextNode('\u00A0'));
             shortcuts_span.appendChild(now_link);
             shortcuts_span.appendChild(document.createTextNode('\u00A0|\u00A0'));
@@ -144,16 +150,19 @@
             // Create clock link div
             //
             // Markup looks like:
-            // <div id="clockbox1" class="clockbox module">
+            // <div id="clockbox1" class="clockbox module" role="dialog"
+            //     aria-label="Choose a time">
             //     <h2>Choose a time</h2>
             //     <ul class="timelist">
-            //         <li><a href="#">Now</a></li>
-            //         <li><a href="#">Midnight</a></li>
-            //         <li><a href="#">6 a.m.</a></li>
-            //         <li><a href="#">Noon</a></li>
-            //         <li><a href="#">6 p.m.</a></li>
+            //         <li><a href="#" role="button">Now</a></li>
+            //         <li><a href="#" role="button">Midnight</a></li>
+            //         <li><a href="#" role="button">6 a.m.</a></li>
+            //         <li><a href="#" role="button">Noon</a></li>
+            //         <li><a href="#" role="button">6 p.m.</a></li>
             //     </ul>
-            //     <p class="calendar-cancel"><a href="#">Cancel</a></p>
+            //     <p class="calendar-cancel">
+            //         <a href="#" role="button" aria-label="Close Clock">Cancel</a>
+            //     </p>
             // </div>
 
             const clock_box = document.createElement('div');
@@ -161,6 +170,8 @@
             clock_box.style.position = 'absolute';
             clock_box.className = 'clockbox module';
             clock_box.id = DateTimeShortcuts.clockDivName + num;
+            clock_box.setAttribute('role', 'dialog');
+            clock_box.setAttribute('aria-labelledby', clockIconId);
             document.body.appendChild(clock_box);
             clock_box.addEventListener('click', function(e) { e.stopPropagation(); });
 
@@ -173,6 +184,7 @@
             const name = typeof DateTimeShortcuts.clockHours[inp.name] === 'undefined' ? 'default_' : inp.name;
             DateTimeShortcuts.clockHours[name].forEach(function(element) {
                 const time_link = quickElement('a', quickElement('li', time_list), gettext(element[0]), 'role', 'button', 'href', '#');
+                time_link.setAttribute('aria-label', gettext(element[0]));
                 time_link.addEventListener('click', function(e) {
                     e.preventDefault();
                     DateTimeShortcuts.handleClockQuicklink(num, element[1]);
@@ -182,6 +194,7 @@
             const cancel_p = quickElement('p', clock_box);
             cancel_p.className = 'calendar-cancel';
             const cancel_link = quickElement('a', cancel_p, gettext('Cancel'), 'role', 'button', 'href', '#');
+            cancel_link.setAttribute('aria-label', gettext('Close Clock'));
             cancel_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.dismissClock(num);
@@ -190,8 +203,11 @@
             document.addEventListener('keyup', function(event) {
                 if (event.which === 27) {
                     // ESC key closes popup
-                    DateTimeShortcuts.dismissClock(num);
-                    event.preventDefault();
+                    const box = document.getElementById(DateTimeShortcuts.clockDivName + num);
+                    if (box && box.style.display !== 'none') {
+                        DateTimeShortcuts.dismissClock(num);
+                        event.preventDefault();
+                    }
                 }
             });
         },
@@ -214,10 +230,17 @@
             // Show the clock box
             clock_box.style.display = 'block';
             document.addEventListener('click', DateTimeShortcuts.dismissClockFunc[num]);
+            const firstFocusable = DateTimeShortcuts.getFirstFocusableElement(clock_box);
+            if (firstFocusable) {
+                firstFocusable.focus();
+            }
         },
-        dismissClock: function(num) {
+        dismissClock: function(num, restoreFocus = true) {
             document.getElementById(DateTimeShortcuts.clockDivName + num).style.display = 'none';
             document.removeEventListener('click', DateTimeShortcuts.dismissClockFunc[num]);
+            if (restoreFocus) {
+                document.getElementById(DateTimeShortcuts.clockLinkName + num).focus();
+            }
         },
         handleClockQuicklink: function(num, val) {
             let d;
@@ -229,7 +252,7 @@
             }
             DateTimeShortcuts.clockInputs[num].value = d.strftime(get_format('TIME_INPUT_FORMATS')[0]);
             DateTimeShortcuts.clockInputs[num].focus();
-            DateTimeShortcuts.dismissClock(num);
+            DateTimeShortcuts.dismissClock(num, false);
         },
         // Add calendar widget to a given field.
         addCalendar: function(inp) {
@@ -238,6 +261,11 @@
             DateTimeShortcuts.calendarInputs[num] = inp;
             DateTimeShortcuts.dismissCalendarFunc[num] = function() { DateTimeShortcuts.dismissCalendar(num); return true; };
 
+            function getFormattedDate(offset) {
+                const d = DateTimeShortcuts.now();
+                d.setDate(d.getDate() + offset);
+                return CalendarNamespace.formatDate(d.getDate(), d.getMonth() + 1, d.getFullYear());
+            }
             // Shortcut links (calendar icon and "Today" link)
             const shortcuts_span = document.createElement('span');
             shortcuts_span.className = DateTimeShortcuts.shortCutsClass;
@@ -246,6 +274,9 @@
             today_link.href = '#';
             today_link.role = 'button';
             today_link.appendChild(document.createTextNode(gettext('Today')));
+            today_link.setAttribute(
+                'aria-label', interpolate(gettext('Today (%(date)s)'), { date: getFormattedDate(0) }, true)
+            );
             today_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.handleCalendarQuickLink(num, 0);
@@ -259,11 +290,14 @@
                 e.stopPropagation();
                 DateTimeShortcuts.openCalendar(num);
             });
+            const calIconId = DateTimeShortcuts.calendarLinkName + num + '_icon';
             quickElement(
                 'span', cal_link, '',
+                'id', calIconId,
                 'class', 'date-icon',
                 'title', gettext('Choose a Date')
             );
+            cal_link.setAttribute('aria-labelledby', calIconId);
             shortcuts_span.appendChild(document.createTextNode('\u00A0'));
             shortcuts_span.appendChild(today_link);
             shortcuts_span.appendChild(document.createTextNode('\u00A0|\u00A0'));
@@ -273,24 +307,38 @@
             //
             // Markup looks like:
             //
-            // <div id="calendarbox3" class="calendarbox module">
-            //     <h2>
-            //           <a href="#" class="link-previous">&lsaquo;</a>
-            //           <a href="#" class="link-next">&rsaquo;</a> February 2003
-            //     </h2>
+            // <div id="calendarbox3" class="calendarbox module"
+            //      role="dialog" aria-label="Choose a Date">
+            //     <div>
+            //         <a href="#" class="calendarnav-previous"
+            //            aria-label="Previous May">&lsaquo;</a>
+            //         <a href="#" class="calendarnav-next"
+            //            aria-label="Next July">&rsaquo;</a>
+            //     </div>
             //     <div class="calendar" id="calendarin3">
             //         <!-- (cal) -->
             //     </div>
             //     <div class="calendar-shortcuts">
-            //          <a href="#">Yesterday</a> | <a href="#">Today</a> | <a href="#">Tomorrow</a>
+            //         <a href="#" role="button"
+            //            aria-label="Yesterday (June 14, 2025)">Yesterday</a>
+            //         |
+            //         <a href="#" role="button"
+            //            aria-label="Today (June 15, 2025)">Today</a>
+            //         |
+            //         <a href="#" role="button"
+            //            aria-label="Tomorrow (June 16, 2025)">Tomorrow</a>
             //     </div>
-            //     <p class="calendar-cancel"><a href="#">Cancel</a></p>
+            //     <p class="calendar-cancel">
+            //         <a href="#" role="button" aria-label="Close Calendar">Cancel</a>
+            //     </p>
             // </div>
             const cal_box = document.createElement('div');
             cal_box.style.display = 'none';
             cal_box.style.position = 'absolute';
             cal_box.className = 'calendarbox module';
             cal_box.id = DateTimeShortcuts.calendarDivName1 + num;
+            cal_box.setAttribute('role', 'dialog');
+            cal_box.setAttribute('aria-labelledby', calIconId);
             document.body.appendChild(cal_box);
             cal_box.addEventListener('click', function(e) { e.stopPropagation(); });
 
@@ -320,18 +368,27 @@
             const shortcuts = quickElement('div', cal_box);
             shortcuts.className = 'calendar-shortcuts';
             let day_link = quickElement('a', shortcuts, gettext('Yesterday'), 'role', 'button', 'href', '#');
+            day_link.setAttribute('aria-label',
+                interpolate(gettext('Yesterday (%(date)s)'), { date: getFormattedDate(-1) }, true)
+            );
             day_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.handleCalendarQuickLink(num, -1);
             });
             shortcuts.appendChild(document.createTextNode('\u00A0|\u00A0'));
             day_link = quickElement('a', shortcuts, gettext('Today'), 'role', 'button', 'href', '#');
+            day_link.setAttribute('aria-label',
+                interpolate(gettext('Today (%(date)s)'), { date: getFormattedDate(0) }, true)
+            );
             day_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.handleCalendarQuickLink(num, 0);
             });
             shortcuts.appendChild(document.createTextNode('\u00A0|\u00A0'));
             day_link = quickElement('a', shortcuts, gettext('Tomorrow'), 'role', 'button', 'href', '#');
+            day_link.setAttribute('aria-label',
+                interpolate(gettext('Tomorrow (%(date)s)'), { date: getFormattedDate(1) }, true)
+            );
             day_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.handleCalendarQuickLink(num, +1);
@@ -341,6 +398,7 @@
             const cancel_p = quickElement('p', cal_box);
             cancel_p.className = 'calendar-cancel';
             const cancel_link = quickElement('a', cancel_p, gettext('Cancel'), 'role', 'button', 'href', '#');
+            cancel_link.setAttribute('aria-label', gettext('Close Calendar'));
             cancel_link.addEventListener('click', function(e) {
                 e.preventDefault();
                 DateTimeShortcuts.dismissCalendar(num);
@@ -348,10 +406,23 @@
             document.addEventListener('keyup', function(event) {
                 if (event.which === 27) {
                     // ESC key closes popup
-                    DateTimeShortcuts.dismissCalendar(num);
-                    event.preventDefault();
+                    const box = document.getElementById(DateTimeShortcuts.calendarDivName1 + num);
+                    if (box && box.style.display !== 'none') {
+                        DateTimeShortcuts.dismissCalendar(num);
+                        event.preventDefault();
+                    }
                 }
             });
+        },
+        updateNavAriaLabels: function(num) {
+            const cal = DateTimeShortcuts.calendars[num];
+            const cal_box = document.getElementById(DateTimeShortcuts.calendarDivName1 + num);
+
+            const prevMonth = CalendarNamespace.monthsOfYear[(cal.currentMonth + 10) % 12];
+            cal_box.querySelector('.calendarnav-previous').setAttribute('aria-label', interpolate(gettext('Previous %(month)s'), { month: prevMonth }, true));
+
+            const nextMonth = CalendarNamespace.monthsOfYear[cal.currentMonth % 12];
+            cal_box.querySelector('.calendarnav-next').setAttribute('aria-label', interpolate(gettext('Next %(month)s'), { month: nextMonth }, true));
         },
         openCalendar: function(num) {
             const cal_box = document.getElementById(DateTimeShortcuts.calendarDivName1 + num);
@@ -384,24 +455,34 @@
             cal_box.style.top = Math.max(0, findPosY(cal_link) - 75) + 'px';
 
             cal_box.style.display = 'block';
+            DateTimeShortcuts.updateNavAriaLabels(num);
             document.addEventListener('click', DateTimeShortcuts.dismissCalendarFunc[num]);
+            const firstFocusable = DateTimeShortcuts.getFirstFocusableElement(cal_box);
+            if (firstFocusable) {
+                firstFocusable.focus();
+            }
         },
-        dismissCalendar: function(num) {
+        dismissCalendar: function(num, restoreFocus = true) {
             document.getElementById(DateTimeShortcuts.calendarDivName1 + num).style.display = 'none';
             document.removeEventListener('click', DateTimeShortcuts.dismissCalendarFunc[num]);
+            if (restoreFocus) {
+                document.getElementById(DateTimeShortcuts.calendarLinkName + num).focus();
+            }
         },
         drawPrev: function(num) {
             DateTimeShortcuts.calendars[num].drawPreviousMonth();
+            DateTimeShortcuts.updateNavAriaLabels(num);
         },
         drawNext: function(num) {
             DateTimeShortcuts.calendars[num].drawNextMonth();
+            DateTimeShortcuts.updateNavAriaLabels(num);
         },
         handleCalendarCallback: function(num) {
             const format = get_format('DATE_INPUT_FORMATS')[0];
             return function(y, m, d) {
                 DateTimeShortcuts.calendarInputs[num].value = new Date(y, m - 1, d).strftime(format);
                 DateTimeShortcuts.calendarInputs[num].focus();
-                document.getElementById(DateTimeShortcuts.calendarDivName1 + num).style.display = 'none';
+                DateTimeShortcuts.dismissCalendar(num, false);
             };
         },
         handleCalendarQuickLink: function(num, offset) {
@@ -409,7 +490,7 @@
             d.setDate(d.getDate() + offset);
             DateTimeShortcuts.calendarInputs[num].value = d.strftime(get_format('DATE_INPUT_FORMATS')[0]);
             DateTimeShortcuts.calendarInputs[num].focus();
-            DateTimeShortcuts.dismissCalendar(num);
+            DateTimeShortcuts.dismissCalendar(num, false);
         }
     };
 
